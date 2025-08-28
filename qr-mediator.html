@@ -10,11 +10,11 @@
     body { background: #0b1020; color: #e6e9f0; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0;}
     .card { background:#0f1630; border:1px solid #1f2b56; padding:20px; border-radius:12px; width:min(760px,95%); text-align:center;}
     .muted{color:#a4abc4}
-    button{padding:10px 14px;border-radius:10px;border:none;background:#1b2a54;color:#fff;cursor:pointer}
+    button{padding:10px 14px;border-radius:10px;border:none;background:#1b2a54;color:#fff;cursor:pointer;transition:background 0.2s}
     button:hover{background:#24366e}
     input{padding:8px;border-radius:8px;border:1px solid #273366;background:#0f1630;color:#e6e9f0}
     .small{font-size:13px}
-    pre{white-space:pre-wrap;text-align:left;background:#071025;padding:10px;border-radius:8px;overflow:auto;max-height:200px}
+    pre{white-space:pre-wrap;text-align:left;background:#071025;padding:10px;border-radius:8px;overflow:auto;max-height:200px;font-size:13px}
   </style>
 </head>
 <body>
@@ -53,7 +53,7 @@ const firebaseConfig = {
 };
 /* --------------------------------------------------------------------- */
 
-const MIN_DWELL_MS = 30000; // keep tab open before "completed"
+const MIN_DWELL_MS = 3000; // keep tab open before "completed"
 
 // ipify API Key (replace with your actual key!)
 const IPIFY_KEY = "at_RQvnSrfe90yOLCq2eTUaXVDevGyAp";
@@ -153,7 +153,7 @@ async function run(){
     log('Created scan entry:', JSON.stringify(payload, null, 2));
   } catch(err) {
     log('Error creating scan:', err.message);
-    $('subtitle').textContent = 'Error recording scan. Try reloading.';
+    $('subtitle').textContent = '⚠️ Error recording scan. Please reload.';
     return;
   }
 
@@ -166,12 +166,12 @@ async function run(){
       await update(scanRef, { completed: true, dwellMs: dwell, completedAt: Date.now() });
       $('status').innerHTML = `<div>Scan completed ✅ (dwell ${dwell} ms)</div>`;
       log('Marked completed, dwellMs=', dwell);
-      $('continue').style.display = 'inline-block';
-      $('continue').onclick = () => { location.href = '/thank-you.html'; };
     } catch(err) {
       log('Error updating completion:', err.message);
-      $('status').textContent = 'Network error completing scan';
+      $('status').innerHTML = `<div class="muted">⚠️ Network issue while finalizing scan. Try again later.</div>`;
     }
+    $('continue').style.display = 'inline-block';
+    $('continue').onclick = () => { location.href = '../thank-you.html'; };
   }, MIN_DWELL_MS);
 }
 
@@ -179,4 +179,3 @@ run();
 </script>
 </body>
 </html>
-

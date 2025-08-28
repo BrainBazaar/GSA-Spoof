@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QR Admin Dashboard</title>
+  <style>
+    :root{font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial;}
+    body{margin:0;background:#071028;color:#e9eef8}
+    header{padding:12px 16px;display:flex;align-items:center;gap:12px;background:#081228;border-bottom:1px solid #12213a}
+    h1{margin:0;font-size:18px}
+    .pill{padding:6px 10px;background:#0b1930;border-radius:999px;border:1px solid #123055}
+    main{padding:16px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    input,button,select{padding:8px;border-radius:8px;border:1px solid #213453;background:#0b1830;color:#e9eef8}
+    .table{width:100%;border-collapse:collapse}
+    table th,table td{padding:8px;border-bottom:1px solid #122034;font-size:13px;white-space:nowrap}
+    .tag{padding:4px 8px;border-radius:8px;font-size:12px}
+    .bot{background:#3b1218;color:#ffc9cf}
+    .ver{background:#0b2a10;color:#b7f0c6}
+    .ok{background:#09273b;color:#9fd7ff}
+    .muted{color:#9fb2d6}
+    .wrap{overflow:auto;background:#07142a;border:1px solid #12243d;padding:12px;border-radius:10px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>QR Engagement Admin</h1>
+    <div class="pill" id="statsTotal">Total: 0</div>
+    <div class="pill" id="statsCompleted">Completed: 0</div>
+    <div class="pill" id="statsBots">Bots: 0</div>
+    <div class="pill" id="statsVerified">Verified IPs: 0</div>
+  </header>
+
+  <main>
+    <div class="controls">
+      <input id="filterUID" placeholder="Filter UID" />
+      <input id="filterPrompt" placeholder="Filter promptId" />
+      <input id="campusPrefixes" placeholder="Campus IP prefixes (comma) e.g. 203.0.113.,198.51.100." style="width:340px"/>
+      <select id="filterMode">
+        <option value="">All</option>
+        <option value="completed">Completed only</option>
+        <option value="bots">Bots only</option>
+        <option value="verified">Verified only</option>
+      </select>
+      <button id="refresh">Refresh</button>
+    </div>
+
+    <div class="wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>UID</th>
+            <th>Prompt</th>
+            <th>Device</th>
+            <th>IP</th>
+            <th>ISP</th>
+            <th>ASN</th>
+            <th>Country</th>
+            <th>Region</th>
+            <th>UA</th>
+            <th>Verified</th>
+            <th>Bot</th>
+            <th>Completed</th>
+            <th>Dwell ms</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAAdAMlp-XzghS5cY5YGWmW4WX601RT47c",
+  authDomain: "clinomatrix.firebaseapp.com",
+  databaseURL: "https://clinomatrix-default-rtdb.firebaseio.com",
+  projectId: "clinomatrix",
+  storageBucket: "clinomatrix.appspot.com",
+  messagingSenderId: "225136307638",
+  appId: "1:225136307638:web:f4a5e0ee919dbeb631a517",
+  measurementId: "G-PN26VFJ9B9"
+};
+
+const app = initializeApp(FIREBASE_CONFIG);
+const db = getDatabase(app);
+
+const rowsEl = document.getElementById('rows');
+const statsTotal = document.getElementById('statsTotal');
+const statsCompleted = document.getElementById('statsCompleted');
+const statsBots = document.getElementById('statsBots');
+const statsVerified = document.getElementById('statsVerified');
+const campusPrefixesInput = document.getElementById('campusPrefixes');
+
+function uaLooksBot(ua=''){
+  const s = (ua||'').toLowerCase();
+  return /(bot|spider|crawl|wget|curl|httpclient|headless|puppeteer|selenium|phantomjs)/.test(s);
+}
+
+function ipIsVerified(ip, prefixes){
+  if(!ip) return false;
+  return prefixes.some(pref => ip.startsWith(pref));
+}
+
+function renderRows(items){
+  rowsEl.innerHTML = items.map(d => {
+    const dt = d.createdAt ? new Date(d.createdAt).toLocaleString() : '';
+    const uaShort = (d.ua||'').slice(0,50) + ((d.ua||'').length>50 ? '…' : '');
+    const verifiedTag = d.__verified ? `<span class="tag ver">verified</span>` : '';
+    const botTag = d.__bot ? `<span class="tag bot">bot</span>` : `<span class="tag ok">human</span>`;
+    const completedTag = d.completed ? `<span class="tag ok">yes</span>` : `<span class="tag bot">no</span>`;
+    return `<tr>
+      <td>${dt}</td>
+      <td>${d.uid||''}</td>
+      <td>${d.promptId||''}</td>
+      <td>${d.deviceId||''}</td>
+      <td>${d.ip||''}</td>
+      <td>${d.ip_meta?.isp||''}</td>
+      <td>${d.ip_meta?.asn||''}</td>
+      <td>${d.ip_meta?.country||''}</td>
+      <td>${d.ip_meta?.region||''}</td>
+      <td>${d.ip_meta?.city||''}</td>   <!-- ✅ added -->
+      <td title="${d.ua||''}">${uaShort}</td>
+      <td>${verifiedTag}</td>
+      <td>${botTag}</td>
+      <td>${completedTag}</td>
+      <td>${d.dwellMs||0}</td>
+    </tr>`;
+  }).join('');
+}
+
+function applyFilters(items){
+  const fUID = document.getElementById('filterUID').value.trim();
+  const fPrompt = document.getElementById('filterPrompt').value.trim();
+  const mode = document.getElementById('filterMode').value;
+  return items.filter(d => {
+    if (fUID && d.uid !== fUID) return false;
+    if (fPrompt && d.promptId !== fPrompt) return false;
+    if (mode === 'completed' && !d.completed) return false;
+    if (mode === 'bots' && !d.__bot) return false;
+    if (mode === 'verified' && !d.__verified) return false;
+    return true;
+  });
+}
+
+let lastItems = [];
+
+function computeDerived(items){
+  const prefixes = (campusPrefixesInput.value || '').split(',').map(s => s.trim()).filter(Boolean);
+  return items.map(d => {
+    const isBot = uaLooksBot(d.ua) || ((d.dwellMs||0) > 0 && (d.dwellMs < 500));
+    const isVerified = ipIsVerified(d.ip||'', prefixes);
+    return {...d, __bot:isBot, __verified:isVerified};
+  });
+}
+
+function updateUI(items){
+  const transformed = computeDerived(items);
+  const filtered = applyFilters(transformed);
+  renderRows(filtered);
+
+  statsTotal.textContent = 'Total: ' + transformed.length;
+  statsCompleted.textContent = 'Completed: ' + transformed.filter(x=>x.completed).length;
+  statsBots.textContent = 'Bots: ' + transformed.filter(x=>x.__bot).length;
+  statsVerified.textContent = 'Verified IPs: ' + transformed.filter(x=>x.__verified).length;
+}
+
+document.getElementById('refresh').onclick = () => updateUI(lastItems);
+document.getElementById('filterUID').oninput = () => updateUI(lastItems);
+document.getElementById('filterPrompt').oninput = () => updateUI(lastItems);
+campusPrefixesInput.oninput = () => updateUI(lastItems);
+
+// realtime listener
+const scansRef = ref(db, 'scans');
+onValue(scansRef, (snapshot) => {
+  const val = snapshot.val() || {};
+  let items = [];
+  for (const [uid, prompts] of Object.entries(val)) {
+    for (const [promptId, devices] of Object.entries(prompts)) {
+      for (const [deviceId, data] of Object.entries(devices)) {
+        items.push({ uid, promptId, deviceId, ...data });
+      }
+    }
+  }
+  lastItems = items;
+  updateUI(items);
+});
+</script>
+</body>
+</html>
