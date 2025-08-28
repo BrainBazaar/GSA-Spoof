@@ -1,0 +1,181 @@
+<!-- qr-mediator.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QR Mediator — Scan</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; color-scheme: dark; }
+    body { background: #0b1020; color: #e6e9f0; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0;}
+    .card { background:#0f1630; border:1px solid #1f2b56; padding:20px; border-radius:12px; width:min(760px,95%); text-align:center;}
+    .muted{color:#a4abc4}
+    button{padding:10px 14px;border-radius:10px;border:none;background:#1b2a54;color:#fff;cursor:pointer}
+    button:hover{background:#24366e}
+    input{padding:8px;border-radius:8px;border:1px solid #273366;background:#0f1630;color:#e6e9f0}
+    .small{font-size:13px}
+    pre{white-space:pre-wrap;text-align:left;background:#071025;padding:10px;border-radius:8px;overflow:auto;max-height:200px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Thanks for scanning ✅</h2>
+    <p class="muted" id="subtitle">Recording your scan — please wait a moment.</p>
+
+    <div id="status" style="margin-top:12px"></div>
+
+    <div style="margin-top:16px">
+      <button id="continue" style="display:none">Continue</button>
+    </div>
+
+    <hr style="margin:18px 0; border-color:#14213a" />
+
+    <div class="small muted">Debug (visible to you):</div>
+    <pre id="debug">Loading...</pre>
+  </div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+import {
+  getDatabase, ref, get, set, update
+} from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+
+/* --------- CONFIG: your Firebase project -------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyAAdAMlp-XzghS5cY5YGWmW4WX601RT47c",
+  authDomain: "clinomatrix.firebaseapp.com",
+  databaseURL: "https://clinomatrix-default-rtdb.firebaseio.com",
+  projectId: "clinomatrix",
+  storageBucket: "clinomatrix.appspot.com",
+  messagingSenderId: "225136307638",
+  appId: "1:225136307638:web:f4a5e0ee919dbeb631a517",
+  measurementId: "G-PN26VFJ9B9"
+};
+/* --------------------------------------------------------------------- */
+
+const MIN_DWELL_MS = 3000; // keep tab open before "completed"
+
+// ipify API Key (replace with your actual key!)
+const IPIFY_KEY = "at_RQvnSrfe90yOLCq2eTUaXVDevGyAp";
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+function $(id){ return document.getElementById(id); }
+const debug = $('debug');
+function log(...a){ debug.textContent += a.join(' ') + '\n'; console.log(...a); }
+function clearLog(){ debug.textContent = ''; }
+
+// Query params:
+const qs = new URLSearchParams(location.search);
+const uid = qs.get('uid') || 'unknown_uid';
+const promptId = qs.get('promptId') || 'unknown_prompt';
+
+// Persistent device ID
+const DEVICE_KEY = 'qr_device_id_v1';
+let deviceId = localStorage.getItem(DEVICE_KEY);
+if (!deviceId) {
+  deviceId = 'dev-' + Math.random().toString(36).slice(2, 12);
+  localStorage.setItem(DEVICE_KEY, deviceId);
+}
+
+clearLog();
+log('uid:', uid);
+log('promptId:', promptId);
+log('deviceId:', deviceId);
+
+// Realtime DB path: scans/uid/promptId/deviceId
+const scanRef = ref(db, `scans/${uid}/${promptId}/${deviceId}`);
+
+// Fetch IP + geo via ipify
+async function fetchIP(){
+  try {
+    const r = await fetch(`https://geo.ipify.org/api/v2/country?apiKey=${IPIFY_KEY}`);
+    if (!r.ok) throw new Error(`ipify error ${r.status}`);
+    const j = await r.json();
+    return {
+      ip: j.ip || '',
+      isp: j.isp || '',
+      asn: j.as?.asn || '',
+      as_name: j.as?.name || '',
+      country: j.location?.country || '',
+      region: j.location?.region || '',
+      timezone: j.location?.timezone || ''
+    };
+  } catch(e) {
+    log('ipify fetch error:', e.message);
+    return { ip:'', country:'', region:'', isp:'', asn:'', as_name:'' };
+  }
+}
+
+async function run(){
+  $('subtitle').textContent = 'Checking whether this device already scanned this QR…';
+
+  try {
+    const existingSnap = await get(scanRef);
+    if (existingSnap.exists()){
+      const data = existingSnap.val();
+      $('subtitle').textContent = 'This device has already scanned this QR.';
+      $('status').innerHTML = `<div class="muted">Already scanned at: ${data.createdAt ? new Date(data.createdAt).toLocaleString() : 'unknown'}</div>`;
+      log('Found existing data:', JSON.stringify(data, null, 2));
+      $('continue').style.display = 'inline-block';
+      $('continue').onclick = () => { location.href = '/thank-you.html'; };
+      return;
+    }
+  } catch(err) {
+    log('Error reading existing scan:', err.message);
+  }
+
+  $('subtitle').textContent = 'Recording scan… keep this tab open for a few seconds.';
+  const ua = navigator.userAgent || '';
+  const ipinfo = await fetchIP();
+
+  const payload = {
+    uid, promptId, deviceId,
+    ip: ipinfo.ip,
+    ip_meta: {
+      country: ipinfo.country,
+      region: ipinfo.region,
+      timezone: ipinfo.timezone,
+      isp: ipinfo.isp,
+      asn: ipinfo.asn,
+      as_name: ipinfo.as_name
+    },
+    ua,
+    createdAt: Date.now(),
+    completed: false,
+    dwellMs: 0,
+    js_ok: true
+  };
+
+  try {
+    await set(scanRef, payload);
+    log('Created scan entry:', JSON.stringify(payload, null, 2));
+  } catch(err) {
+    log('Error creating scan:', err.message);
+    $('subtitle').textContent = 'Error recording scan. Try reloading.';
+    return;
+  }
+
+  $('status').innerHTML = `<div class="muted">Scan recorded. Waiting ${MIN_DWELL_MS/1000}s to mark complete...</div>`;
+
+  const start = Date.now();
+  setTimeout(async () => {
+    const dwell = Date.now() - start;
+    try {
+      await update(scanRef, { completed: true, dwellMs: dwell, completedAt: Date.now() });
+      $('status').innerHTML = `<div>Scan completed ✅ (dwell ${dwell} ms)</div>`;
+      log('Marked completed, dwellMs=', dwell);
+      $('continue').style.display = 'inline-block';
+      $('continue').onclick = () => { location.href = '/thank-you.html'; };
+    } catch(err) {
+      log('Error updating completion:', err.message);
+      $('status').textContent = 'Network error completing scan';
+    }
+  }, MIN_DWELL_MS);
+}
+
+run();
+</script>
+</body>
+</html>
